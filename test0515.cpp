@@ -714,8 +714,8 @@ void test::redNumberdetectionFilter()
 			int x_tmp = max(0, int(objectDetectionRect[i].x+ objectDetectionRect[i].width/2- tmpsize/2));
 			int y_tmp = max(0, int(objectDetectionRect[i].y+ objectDetectionRect[i].height / 2 - tmpsize / 2));
 
-			int width_tmp = std::min(tmpsize, Image.cols - tmpsize);
-			int height_tmp = std::min(tmpsize, Image.rows - tmpsize);
+			int width_tmp = std::min(tmpsize, Image.cols - x_tmp);
+			int height_tmp = std::min(tmpsize, Image.rows - y_tmp);
 			Rect tmp(x_tmp, y_tmp, width_tmp, height_tmp);
 			Mat croptmp = cropImage(tmp);
 			string cropname = "c:\\testDetection\\Crop\\Crop_" + to_string(resultImageNum) + "__" + to_string(i) + resultBackName;

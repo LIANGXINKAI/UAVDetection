@@ -24,6 +24,12 @@ struct aircraft_data {
 vector<aircraft_data> outputDetectionResult;
 
 deque<ImageData> testImage;
+
+/*
+注释
+功能：鉴于IP摄像头容易产生的堵塞问题，利用独立线程读取图像，并将其塞入vector中，后续依次pop此vector尾部数据进行处理。
+关键参数：采样数SampleSize，用于对连续图像进行采样处理，越大处理的图像间隔越大。
+*/
 void test::readImage() {
 	// Open  a camera stream.
 	VideoCapture cap;
@@ -59,7 +65,6 @@ void test::readImage() {
 	}
 	return;
 }
-//全局变量
 test::test()
 {
 }
@@ -83,6 +88,11 @@ inline void ListRemoveAtIdx(vector<T>& list, size_t idx)
 	}
 	list.pop_back();
 }
+/*
+注释
+功能：针对yolo的输入数据要求，对原始图像进行处理。
+关键参数：int yoloWidth, int yoloHeight -- 处理后图像的宽高。
+*/
 Mat test::letterbox_image(Mat& origFrame, int yoloWidth, int yoloHeight)
 {
 	//resize后明确其位置
@@ -108,6 +118,11 @@ Mat test::letterbox_image(Mat& origFrame, int yoloWidth, int yoloHeight)
 	resized.copyTo(boxed(Rect((yoloWidth - new_w) / 2, (yoloHeight - new_h) / 2, new_w, new_h)));
 	return boxed; //返回的图像尺寸为需要的(w,h)
 }
+/*
+注释
+功能：利用yolo得到识别结果，结合长宽比阈值约束，将识别结果映射回原始图像并输出（目标类别、识别置信度、识别框）。
+关键参数：double HighWidthHeightRatio, double LowWidthHeightRatio --长宽比阈值约束。
+*/
 void test::postprocessSaveConfidence(Mat & resizFrame, Mat & origFrame, const vector<Mat> & outs, vector<Point3f> & objectDetectionImage, vector<double> & objectDetectionConfidence, vector<Rect> & objectDetectionRect, double HighWidthHeightRatio, double LowWidthHeightRatio, double confThreshold, double nmsThreshold, int yoloWidth, int yoloHeight)
 {
 	vector<int> classIds;
@@ -164,7 +179,6 @@ void test::postprocessSaveConfidence(Mat & resizFrame, Mat & origFrame, const ve
 
 	vector<int> indices;
 	NMSBoxes(boxes, confidences, confThreshold, nmsThreshold, indices);
-	//0519:只保留图像中完整目标！
 	for (size_t i = 0; i < indices.size(); ++i)
 	{
 		int idx = indices[i];
@@ -175,17 +189,15 @@ void test::postprocessSaveConfidence(Mat & resizFrame, Mat & origFrame, const ve
 		int height_tmp = box.height * resizeScale;
 		Rect boxResize = Rect(x_tmp, y_tmp, width_tmp, height_tmp);
 
-		//	0519:判断边界的条件！
+		//判断边界的条件！
+		//目标点的中心若在图像边缘则将其结果滤除--只考虑图像x轴两端
 		//由于输出的边框没法固定，因此不好判断其边界的阈值，暂时不加这一块内容
-		int ImgSelfsize = 140;
-		int xMin_Space = 0-(x_tmp + width_tmp/2  - ImgSelfsize);
-		int yMin_Space = 0-(y_tmp + height_tmp/2 - ImgSelfsize);
-		int xMax_Space = x_tmp + width_tmp / 2 + ImgSelfsize - origFrame.cols;
-		int yMax_Space = y_tmp + height_tmp / 2 + ImgSelfsize - origFrame.rows;
-		int borderCompare = 100;
+        double xCenterloc= x_tmp + width_tmp / 2；
+        double borderMinXCompare = 70;
+        double borderMaxXCompare = 1920-70;
 		if ((double(width_tmp) / height_tmp > LowWidthHeightRatio) && (double(width_tmp) / height_tmp < HighWidthHeightRatio))
 		{
-			if ((xMin_Space > borderCompare) || (xMax_Space > borderCompare) )
+			if ((xCenterloc < borderMinXCompare) || (xCenterloc > borderMaxXCompare) )
 				continue;
 			drawPred(classIds[idx], confidences[idx], boxes[idx].x, boxes[idx].y, boxes[idx].x + boxes[idx].width, boxes[idx].y + boxes[idx].height, resizFrame);
 			drawPred(classIds[idx], confidences[idx], x_tmp, y_tmp, x_tmp + width_tmp, y_tmp + height_tmp, origFrame);
@@ -197,6 +209,10 @@ void test::postprocessSaveConfidence(Mat & resizFrame, Mat & origFrame, const ve
 	}
 }
 
+/*
+注释
+功能：将识别结果表现在图像上。
+*/
 void test::drawPred(int classId, float conf, int left, int top, int right, int bottom, Mat & frame)
 {
 	//Draw a rectangle displaying the bounding box
@@ -213,6 +229,7 @@ void test::drawPred(int classId, float conf, int left, int top, int right, int b
 	rectangle(frame, Point(left, top - round(1.5 * labelSize.height)), Point(left + round(1.5 * labelSize.width), top + baseLine), Scalar(255, 255, 255), FILLED);
 	putText(frame, label, Point(left, top), FONT_HERSHEY_SIMPLEX, 0.75, Scalar(0, 0, 0), 1);
 }
+
 vector<String> test::getOutputsNames(const Net & net)
 {
 	static vector<String> names;
@@ -231,9 +248,14 @@ vector<String> test::getOutputsNames(const Net & net)
 	}
 	return names;
 }
+
+/*
+注释
+功能：识别与跟踪结合，将时序上的不同帧图像的同一目标关联。
+关键参数：double HighWidthHeightRatio, double LowWidthHeightRatio --长宽比阈值约束。
+*/
 void test::ObjectDetectionUpdateWithConfidence(vector<vector<Point3f>> & ObjectDetectionContinueMaxlenFrame, vector<vector<double>> & MaxlenFrameObjectDetectionConfidence, vector<Point3f> & newObjectDetection, vector<double> & newObjectDetectionConfidence, vector<vector<int>> & Track, int& trackCount, int maxlen)
 {
-	//cout << "开始更新track数据" << endl;
 	int removePointSize = ObjectDetectionContinueMaxlenFrame[0].size();
 	ObjectDetectionContinueMaxlenFrame.erase(ObjectDetectionContinueMaxlenFrame.begin());
 	ObjectDetectionContinueMaxlenFrame.push_back(newObjectDetection);
@@ -278,11 +300,11 @@ void test::ObjectDetectionUpdateWithConfidence(vector<vector<Point3f>> & ObjectD
 	}
 	// 根据过程中的x,y方向上的冗余
 	vector<Point> oldInNewdx;
-	distanceMatch(ObjectDetectionContinueMaxlenFrame[ObjectDetectionContinueMaxlenFrame.size() - 2], newObjectDetection, oldInNewdx, 50, 200);
+	distanceMatch(ObjectDetectionContinueMaxlenFrame[ObjectDetectionContinueMaxlenFrame.size() - 2], newObjectDetection, oldInNewdx, 100, 200);
 	vector<Point> secondOldInNewdx;
-	distanceMatch(ObjectDetectionContinueMaxlenFrame[ObjectDetectionContinueMaxlenFrame.size() - 3], newObjectDetection, secondOldInNewdx, 50, 400);
+	distanceMatch(ObjectDetectionContinueMaxlenFrame[ObjectDetectionContinueMaxlenFrame.size() - 3], newObjectDetection, secondOldInNewdx, 100, 400);
 	vector<Point> thirdOldInNewdx;
-	distanceMatch(ObjectDetectionContinueMaxlenFrame[ObjectDetectionContinueMaxlenFrame.size() - 4], newObjectDetection, thirdOldInNewdx, 50, 600);
+	distanceMatch(ObjectDetectionContinueMaxlenFrame[ObjectDetectionContinueMaxlenFrame.size() - 4], newObjectDetection, thirdOldInNewdx, 100, 600);
 	for (auto idx : oldInNewdx) {
 		int id1 = int(idx.x) + offsetAccumulate[offsetAccumulate.size() - 2];
 		int id2 = int(idx.y) + offsetAccumulate[offsetAccumulate.size() - 1];
@@ -372,6 +394,10 @@ void test::ObjectDetectionUpdateWithConfidence(vector<vector<Point3f>> & ObjectD
 	}
 }
 
+/*
+注释
+功能：利用距离关系将前一帧识别结果与当前帧识别结果进行关联。
+*/
 void test::distanceMatch(vector<Point3f > oldObjectDetection, vector<Point3f>newObjectDetection, vector<Point> & oldInNewdx, int x_Space, int y_Space) {
 	vector<int> old2newObjectDetection;
 	bool debug = 0;
@@ -425,6 +451,9 @@ void test::distanceMatch(vector<Point3f > oldObjectDetection, vector<Point3f>new
 		}
 	}
 }
+
+
+
 void test::get_offsets(vector<vector<Point3f>>saveObjectDetection, vector<int> & offsetAccumulate)
 {
 	vector<int>offsets;
@@ -453,6 +482,10 @@ void test::get_offsets(vector<vector<Point3f>>saveObjectDetection, vector<int> &
 	}
 
 }
+/*
+注释
+功能：关键函数，处理图像，得到图像中目标的GPS位置。
+*/
 void test::redNumberdetectionFilter()
 {
 
@@ -462,7 +495,7 @@ void test::redNumberdetectionFilter()
 	float nmsThreshold = 0.4;  // Non-maximum suppression threshold
 	int inpWidth = 416;  // Width of network's input image
 	int inpHeight = 416; // Height of network's input image
-	//0520长宽比的阈值设置修改
+	//长宽比的阈值设置修改
 	double HighWidthHeightRatio = 5;
 	double LowWidthHeightRatio = 0.2;
 	vector<string> classes;
@@ -510,16 +543,8 @@ void test::redNumberdetectionFilter()
 	system(command.c_str());
 	command = "mkdir -p c:\\testDetection\\TIMEGPS";
 	system(command.c_str());
-	//0520
 	command = "mkdir -p c:\\testDetection\\Crop";
 	system(command.c_str());
-
-
-
-	//// Open  a camera stream.
-	//VideoCapture cap;
-	////cap.set(CAP_PROP_BUFFERSIZE, 1);
-	//cap.open(g_video,CAP_FFMPEG); // camera id --liang
 
 	Mat Image;
 
@@ -538,34 +563,26 @@ void test::redNumberdetectionFilter()
 	vector<Rect>oldObjectDetectionRect;
 	vector<vector<int>>Track;//前两列分别为track的序号与track的分数，后面为依次帧的点序号
 
-	////detection loop;
-	//if (!cap.isOpened()) {
-	//	cout << "No camera is opened !!!" << endl;
-	//	_cprintf("No PICTURES Done processing !!!");
-	//	waitKey(3000);
-	//	return;
-	//}
-	//AfxBeginThread(this->readImage, NULL);
+
 	bool detectionOpen = true;
 	while (detectionOpen) {
 		if (testImage.size() < 1)
 			continue;
 		ImageData tmp = testImage[0];
 		Image = tmp.srcOrig.clone();
-		imshow("test", Image);
-		waitKey(1);
+		//imshow("test", Image);
+		//waitKey(1);
 		resultImageNum = tmp.ImageNum;
 		testImage.pop_front();
 		auto start=tmp.timeElipse; 
 
-		int delay = 200;//ms
+		int delay = 200;//由于图像与GPS具有时延误差，因此设置一个delay量补偿
 		auto now = start;
 		
 		if (resultImageNum % processSampling != 0)
 			continue;
 		
 		//经纬度数据和欧拉角数据 
-		//与int可以相互转化么？
 		//string writeOnlyResultImage = "c:\\testDetection\\detection\\" + to_string(resultImageNum) + resultBackName;
 		//imwrite(writeOnlyResultImage, Image);
 		//continue;
@@ -630,21 +647,7 @@ void test::redNumberdetectionFilter()
 
 		vector<Rect>objectDetectionRect;
 		postprocessSaveConfidence(ImageWaitDetectionResize, ImageWaitDetection, outs, objectDetectionImage, objectDetectionConfidence, objectDetectionRect, HighWidthHeightRatio, LowWidthHeightRatio, confThreshold, nmsThreshold, inpWidth, inpHeight);
-		string trackPoseImgResultTxt = "c:\\testDetection\\GPS\\resultTrackPose_" + to_string(resultImageNum) + ".txt";
 
-		ofstream OutFiletrackPose(trackPoseImgResultTxt);
-
-		//05.13增加基于已知尺寸大小的位姿估计
-		Mat srcAttitude = Image.clone();
-		for (auto i : objectDetectionRect)
-		{
-			Mat rvec1, rvec2, tvec1, tvec2;
-			GetIPPEAttitude(srcAttitude, i, rvec1, rvec2, tvec1, tvec2);
-			OutFiletrackPose << "位置: " << endl;
-			OutFiletrackPose << tvec1 << endl;
-			OutFiletrackPose << "姿态: " << endl;
-			OutFiletrackPose << rvec1 << endl;
-		}
 		Mat detectedFrameResult;
 		ImageWaitDetection.convertTo(detectedFrameResult, CV_8U);
 		//没有识别结果的依然输出,且在图像上明显标记
@@ -658,6 +661,21 @@ void test::redNumberdetectionFilter()
 			string writeResultImage = "c:\\testDetection\\detection\\" + to_string(resultImageNum) + resultBackName;
 			imwrite(writeResultImage, detectedFrameResult);
 			continue;
+		}
+		string trackPoseImgResultTxt = "c:\\testDetection\\GPS\\resultTrack_" + to_string(resultImageNum) + "_Pose.txt";
+
+		ofstream OutFiletrackPose(trackPoseImgResultTxt);
+
+		//05.13增加基于已知尺寸大小的位姿估计
+		Mat srcAttitude = Image.clone();
+		for (auto i : objectDetectionRect)
+		{
+			Mat rvec1, rvec2, tvec1, tvec2;
+			GetIPPEAttitude(srcAttitude, i, rvec1, rvec2, tvec1, tvec2);
+			OutFiletrackPose << "位置: " << endl;
+			OutFiletrackPose << tvec1 << endl;
+			OutFiletrackPose << "姿态: " << endl;
+			OutFiletrackPose << rvec1 << endl;
 		}
 		Scalar drawcolor;
 		for (auto i : objectDetectionImage)
@@ -996,6 +1014,10 @@ void test::redNumberdetectionFilter()
 		//}
 	}
 }
+
+
+
+
 void test::redNumberdetectionFilterFromMovie()
 {
 
@@ -1128,21 +1150,21 @@ void test::redNumberdetectionFilterFromMovie()
 		distCoeffs.at<double>(3) = 4.06e-4;
 		distCoeffs.at<double>(4) = 0.003;
 
-		Mat view, rview, map1, map2;
-		Size imageSize;
-		imageSize = Image.size();
-		initUndistortRectifyMap(cameraMatrix, distCoeffs, Mat(),
-			getOptimalNewCameraMatrix(cameraMatrix, distCoeffs, imageSize, 1, imageSize, 0),
-			imageSize, CV_32FC1, map1, map2);
+		//Mat view, rview, map1, map2;
+		//Size imageSize;
+		//imageSize = Image.size();
+		//initUndistortRectifyMap(cameraMatrix, distCoeffs, Mat(),
+			//getOptimalNewCameraMatrix(cameraMatrix, distCoeffs, imageSize, 1, imageSize, 0),
+			//imageSize, CV_32FC1, map1, map2);
 
-		remap(Image, udistImg, map1, map2, INTER_LINEAR);
-		Image = udistImg.clone();
+		//remap(Image, udistImg, map1, map2, INTER_LINEAR);
+		//Image = udistImg.clone();
 		//undistort(Image, udistImg, cameraMatrix, distCoeffs);
-		namedWindow("校正前",WINDOW_NORMAL);
-		namedWindow("校正后", WINDOW_NORMAL);
-		imshow("校正前", Image);
-		imshow("校正后", udistImg);
-		cout << "udistImg: "<<udistImg.size() << endl;
+		//namedWindow("校正前",WINDOW_NORMAL);
+		//namedWindow("校正后", WINDOW_NORMAL);
+		//imshow("校正前", Image);
+		//imshow("校正后", udistImg);
+		//cout << "udistImg: "<<udistImg.size() << endl;
 		waitKey(1);
 		//testImage.pop_front();
 		auto start = clock();
